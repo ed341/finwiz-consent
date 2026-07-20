@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FinWiz — approve connector access</title>
+<!--
+  FinWiz connector consent page (ACCESS-BUILD Phase B, run 29).
+  Hosted on GitHub Pages because Supabase does not serve HTML from *.supabase.co.
+  This page is Supabase's "authorization path": people land here mid-OAuth-flow
+  with an ?authorization_id=... in the address, sign in with Google if needed,
+  and approve or deny the connector's access. Sign-in only: account creation is
+  disabled server-side; this page cannot create accounts.
+  The embedded key is the project's public (publishable) key — safe by design;
+  all data rights are enforced per-person by database row-level security.
+-->
+<style>
+  :root{
+    --ink:#16241f; --muted:#66716b; --line:#e3e5e2; --bg:#fafaf8;
+    --card:#ffffff; --green:#0e6b45; --green-dark:#0a5636; --red:#a4262c;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;
+       display:flex;min-height:100vh;align-items:center;justify-content:center;padding:24px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;
+        border-top:3px solid var(--green);max-width:420px;width:100%;
+        padding:32px 32px 28px;box-shadow:0 1px 3px rgba(22,36,31,.06)}
+  .brand{font-size:13px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;
+         color:var(--green);margin:0 0 20px}
+  h1{font-size:20px;font-weight:650;margin:0 0 8px}
+  p{margin:0 0 16px;color:var(--muted);font-size:15px}
+  .who{font-size:13px;color:var(--muted);margin:20px 0 0;padding-top:14px;border-top:1px solid var(--line)}
+  .who a{color:var(--muted)}
+  .client{display:inline-block;font-family:ui-monospace,Menlo,Consolas,monospace;
+          font-size:14px;background:#f0f4f2;border:1px solid var(--line);
+          border-radius:6px;padding:2px 8px;color:var(--ink)}
+  ul.scopes{list-style:none;margin:0 0 20px;padding:0}
+  ul.scopes li{font-size:14px;color:var(--ink);padding:6px 0 6px 22px;position:relative}
+  ul.scopes li::before{content:"";position:absolute;left:4px;top:13px;width:8px;height:8px;
+          border-radius:50%;background:var(--green);opacity:.55}
+  button,.gbtn{display:block;width:100%;padding:12px 16px;border-radius:8px;font-size:15px;
+         font-weight:600;cursor:pointer;text-align:center;text-decoration:none}
+  .approve{background:var(--green);border:1px solid var(--green);color:#fff;margin-bottom:10px}
+  .approve:hover{background:var(--green-dark)}
+  .deny{background:#fff;border:1px solid var(--line);color:var(--ink)}
+  .deny:hover{background:#f4f4f2}
+  .gbtn{background:#fff;border:1px solid var(--line);color:var(--ink)}
+  .gbtn:hover{background:#f4f4f2}
+  .error{border-left:3px solid var(--red);background:#fdf5f5;border-radius:0 8px 8px 0;
+         padding:12px 14px;font-size:14px;color:var(--ink);margin:0 0 16px}
+  .quiet{font-size:13px;color:var(--muted)}
+  .spin{display:inline-block;width:16px;height:16px;border:2px solid var(--line);
+        border-top-color:var(--green);border-radius:50%;animation:r .8s linear infinite;
+        vertical-align:-3px;margin-right:8px}
+  @keyframes r{to{transform:rotate(360deg)}}
+  @media (prefers-reduced-motion: reduce){.spin{animation:none}}
+  button:focus-visible,.gbtn:focus-visible{outline:2px solid var(--green);outline-offset:2px}
+</style>
+</head>
+<body>
+<div class="card">
+  <p class="brand">FinWiz</p>
+  <div id="view"><p><span class="spin"></span>Loading…</p></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+(function () {
+  "use strict";
+  var SUPABASE_URL = "https://kybhfghuzsgovlrdbayc.supabase.co";
+  var PUBLISHABLE_KEY = "sb_publishable_a0iaDFwbby4Ejwz0Mg_yFQ_JBjsXrYq";
+  var view = document.getElementById("view");
+
+  function esc(s){var d=document.createElement("div");d.textContent=String(s==null?"":s);return d.innerHTML;}
+  function show(html){view.innerHTML=html;}
+  function fail(title, msg, hint){
+    show("<h1>"+esc(title)+"</h1><div class='error'>"+esc(msg)+"</div>"+
+         (hint?"<p class='quiet'>"+esc(hint)+"</p>":""));
+  }
+
+  if (!window.supabase || !window.supabase.createClient) {
+    fail("Something didn't load", "The sign-in library could not be loaded.",
+         "Check your internet connection, then refresh this page.");
+    return;
+  }
+
+  var client = window.supabase.createClient(SUPABASE_URL, PUBLISHABLE_KEY);
+  var params = new URLSearchParams(window.location.search);
+  var authorizationId = params.get("authorization_id");
+  var selfUrl = window.location.origin + window.location.pathname +
+                (authorizationId ? "?authorization_id=" + encodeURIComponent(authorizationId) : "");
+
+  // Google sometimes returns an error instead of a session (e.g. user cancelled).
+  var hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+  var authError = hashParams.get("error_description") || hashParams.get("error");
+
+  function start(){
+    if (!authorizationId) {
+      show("<h1>Nothing to approve</h1>"+
+           "<p>This page is part of the FinWiz connector's sign-in flow and was opened directly. "+
+           "To connect, start from Claude — it will bring you here with a pending request.</p>");
+      return;
+    }
+    if (authError) {
+      fail("Sign-in didn't complete", authError,
+           "You can try again below.");
+      renderSignIn(true);
+      return;
+    }
+    client.auth.getSession().then(function(res){
+      var session = res.data ? res.data.session : null;
+      if (!session) { renderSignIn(false); return; }
+      renderConsent(session);
+    }).catch(function(e){ fail("Something went wrong", String(e), "Refresh the page to try again."); });
+  }
+
+  function renderSignIn(append){
+    var html =
+      "<h1>Sign in to continue</h1>"+
+      "<p>Claude is asking to connect to the FinWiz database as you. "+
+      "Sign in with the Google account FinWiz has on file for you.</p>"+
+      "<button class='gbtn' id='googleBtn'>Continue with Google</button>"+
+      "<p class='who'>Access is by invitation only. Signing in here never creates a new account.</p>";
+    if (append) { view.innerHTML += html; } else { show(html); }
+    document.getElementById("googleBtn").addEventListener("click", function(){
+      show("<p><span class='spin'></span>Taking you to Google…</p>");
+      client.auth.signInWithOAuth({ provider:"google", options:{ redirectTo: selfUrl } })
+        .then(function(res){ if (res.error) fail("Could not start Google sign-in", res.error.message,
+          "Refresh and try again."); });
+    });
+  }
+
+  function renderConsent(session){
+    client.auth.oauth.getAuthorizationDetails(authorizationId).then(function(res){
+      if (res.error) {
+        fail("This request has expired or is invalid", res.error.message,
+             "Close this tab and start the connection again from Claude.");
+        return;
+      }
+      var d = res.data;
+      // Previously consented: Supabase says skip the screen and send them on.
+      if (d && !("authorization_id" in d) && d.redirect_url) {
+        show("<p><span class='spin'></span>Already approved — returning you…</p>");
+        window.location.replace(d.redirect_url);
+        return;
+      }
+      var clientName = (d && d.client && d.client.name) ? d.client.name : "Unknown application";
+      var scopes = (d && d.scope ? d.scope.trim() : "");
+      var scopeHtml = "";
+      if (scopes) {
+        scopeHtml = "<p style='margin-bottom:8px'><strong style='color:var(--ink);font-size:14px'>It is asking to:</strong></p><ul class='scopes'>" +
+          scopes.split(/\s+/).map(function(s){ return "<li>"+esc(describeScope(s))+"</li>"; }).join("") +
+          "</ul>";
+      }
+      show(
+        "<h1>Approve connector access?</h1>"+
+        "<p><span class='client'>"+esc(clientName)+"</span> wants to connect to the FinWiz database as you. "+
+        "What it can see and change is limited to the rights FinWiz has granted your account.</p>"+
+        scopeHtml+
+        "<button class='approve' id='approveBtn'>Approve access</button>"+
+        "<button class='deny' id='denyBtn'>Deny</button>"+
+        "<p class='who'>Signed in as <strong>"+esc(session.user.email)+"</strong> · "+
+        "<a href='#' id='switchUser'>Not you? Switch account</a></p>"
+      );
+      document.getElementById("approveBtn").addEventListener("click", function(){ decide(true); });
+      document.getElementById("denyBtn").addEventListener("click", function(){ decide(false); });
+      document.getElementById("switchUser").addEventListener("click", function(ev){
+        ev.preventDefault();
+        client.auth.signOut().then(function(){ window.location.replace(selfUrl); });
+      });
+    }).catch(function(e){ fail("Something went wrong", String(e), "Refresh the page to try again."); });
+  }
+
+  function decide(approved){
+    show("<p><span class='spin'></span>"+(approved?"Approving…":"Recording your decision…")+"</p>");
+    var call = approved
+      ? client.auth.oauth.approveAuthorization(authorizationId)
+      : client.auth.oauth.denyAuthorization(authorizationId);
+    call.then(function(res){
+      if (res.error) { fail("Could not record your decision", res.error.message,
+        "Refresh the page and try once more."); return; }
+      window.location.replace(res.data.redirect_url);
+    }).catch(function(e){ fail("Something went wrong", String(e), "Refresh the page to try again."); });
+  }
+
+  function describeScope(s){
+    switch (s) {
+      case "openid":  return "Confirm your identity";
+      case "email":   return "See your email address";
+      case "profile": return "See your basic profile (name, picture)";
+      case "phone":   return "See your phone number";
+      default:        return s;
+    }
+  }
+
+  start();
+})();
+</script>
+</body>
+</html>
