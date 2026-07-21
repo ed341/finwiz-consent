@@ -167,7 +167,7 @@
       document.getElementById("denyBtn").addEventListener("click", function(){ decide(false); });
       document.getElementById("switchUser").addEventListener("click", function(ev){
         ev.preventDefault();
-        client.auth.signOut().then(function(){ window.location.replace(selfUrl); });
+        client.auth.signOut({ scope: 'local' }).then(function(){ window.location.replace(selfUrl); });
       });
     }).catch(function(e){ fail("Something went wrong", String(e), "Refresh the page to try again."); });
   }
